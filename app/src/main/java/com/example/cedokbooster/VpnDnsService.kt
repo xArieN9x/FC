@@ -89,6 +89,13 @@ class VpnDnsService : VpnService() {
     private val isRestarting = AtomicBoolean(false)
     private val restartCount = AtomicInteger(0)
     private val handler = Handler(Looper.getMainLooper())
+
+    // DNS Health Monitor
+    private var dnsHealthMonitorJob: kotlinx.coroutines.Job? = null
+    private val dnsFailureCount = AtomicInteger(0)
+    private const val MAX_DNS_FAILURES = 5
+    private var lastSwitchTime = 0L
+    private const val MIN_SWITCH_INTERVAL = 60_000L // 1 min
     
     /**
      * Dapatkan DNS type optimal secara auto
@@ -457,6 +464,80 @@ class VpnDnsService : VpnService() {
         
         LogUtil.e(TAG, "💥 All DNS servers failed")
     }
+
+    // REAL-TIME DNS HEALTH MONITOR + SMART SWITCH
+    private fun startDnsHealthMonitor() {
+        dnsHealthMonitorJob?.cancel()
+        dnsHealthMonitorJob = coroutineScope.launch {
+            while (isRunning.get()) {
+                delay(30_000) // setiap 30s
+    
+                val healthy = checkCurrentDnsHealth()
+                if (!healthy) {
+                    val fail = dnsFailureCount.incrementAndGet()
+                    LogUtil.w(TAG, "⚠️ DNS unhealthy count=$fail")
+    
+                    if (fail >= MAX_DNS_FAILURES) {
+                        dnsFailureCount.set(0)
+                        smartDnsSwitch()
+                    }
+                } else {
+                    dnsFailureCount.set(0)
+                }
+            }
+        }
+    }
+    
+    private fun stopDnsHealthMonitor() {
+        dnsHealthMonitorJob?.cancel()
+        dnsHealthMonitorJob = null
+    }
+    
+    private fun checkCurrentDnsHealth(): Boolean {
+        return try {
+            val start = System.nanoTime()
+            InetAddress.getAllByName("my.usehurrier.com")
+            val latency = (System.nanoTime() - start) / 1_000_000
+            latency in 10..500
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private fun smartDnsSwitch() {
+        val now = System.currentTimeMillis()
+        if (now - lastSwitchTime < MIN_SWITCH_INTERVAL) {
+            LogUtil.d(TAG, "⏳ Skip switch (cooldown)")
+            return
+        }
+        lastSwitchTime = now
+    
+        coroutineScope.launch {
+            try {
+                val oldType = currentDnsType
+                val newType = getOptimalDnsType()
+    
+                if (newType != oldType) {
+                    LogUtil.d(TAG, "🔄 Smart switch DNS $oldType → $newType")
+                    currentDnsType = newType
+                    performSoftRestart()
+                    notifyDnsSwitch(getDnsServers(newType).first())
+                } else {
+                    LogUtil.d(TAG, "ℹ️ DNS type still optimal ($oldType)")
+                }
+            } catch (e: Exception) {
+                LogUtil.e(TAG, "Smart switch failed: ${e.message}")
+            }
+        }
+    }
+    
+    private fun notifyDnsSwitch(newDns: String) {
+        sendBroadcast(Intent("DNS_SWITCHED").apply {
+            putExtra("new_dns", newDns)
+            putExtra("time", System.currentTimeMillis())
+        })
+        updateNotification("Switched → $newDns")
+    }
     
     /**
      * SOFT RESTART - Untuk DAJ sequence
@@ -645,6 +726,7 @@ class VpnDnsService : VpnService() {
         if (success) {
             isRunning.set(true)
             showNotification()
+            startDnsHealthMonitor()   // 🟢 mula monitor DNS real-time
             
             sendBroadcast(Intent("DNS_VPN_STATUS").apply {
                 putExtra("status", "ACTIVE")
@@ -660,6 +742,7 @@ class VpnDnsService : VpnService() {
     }
     
     private fun stopVpnService() {
+        stopDnsHealthMonitor()
         if (!isRunning.get()) {
             LogUtil.d(TAG, "VPN already stopped")
             stopSelf() // 🟢 TAMBAH: Pasti stop service
