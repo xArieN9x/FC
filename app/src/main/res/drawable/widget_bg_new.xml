@@ -1,0 +1,10 @@
+<!-- widget_bg_new.xml -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle"
+    android:padding="8dp">
+    <solid android:color="#E0F7FA" />
+    <stroke 
+        android:width="2dp"
+        android:color="#80EF5350" />
+    <corners android:radius="12dp" />
+</shape>
