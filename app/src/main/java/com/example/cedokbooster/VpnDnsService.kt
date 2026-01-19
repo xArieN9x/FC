@@ -157,7 +157,7 @@ class VpnDnsService : VpnService() {
         return try {
             currentDnsType = if (dnsType == "auto") getOptimalDnsType() else dnsType
            
-            val dnsServers = getDnsServers(dnsType)
+            val dnsServers = getDnsServers(currentDnsType)
             
             val builder = Builder()
                 .setSession("CedokDNS-$dnsType")
