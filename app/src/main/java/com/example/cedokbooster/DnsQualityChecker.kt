@@ -4,6 +4,7 @@ import android.util.Log
 import java.net.*
 import java.util.concurrent.*
 import kotlin.math.sqrt
+import java.util.concurrent.atomic.AtomicInteger
 
 class DnsQualityChecker {
     
