@@ -98,28 +98,6 @@ class MainActivity : AppCompatActivity() {
             openAccessibilitySettings()
         }
 
-        /*btnOnA.setOnClickListener {
-            Log.d(TAG, "BUTTON START CLICKED")
-            
-            if (!isAccessibilityEnabled()) {
-                Toast.makeText(this, "Sila enable Accessibility Service dulu!", Toast.LENGTH_LONG).show()
-                openAccessibilitySettings()
-                return@setOnClickListener
-            }
-            
-            val forceCloseIntent = Intent("com.example.cedokbooster.FORCE_CLOSE_PANDA")
-            LocalBroadcastManager.getInstance(this).sendBroadcast(forceCloseIntent)
-            Log.d(TAG, "Broadcast sent: FORCE_CLOSE_PANDA")
-            
-            Toast.makeText(this, "Force closing Panda app...", Toast.LENGTH_SHORT).show()
-            
-            Handler(Looper.getMainLooper()).postDelayed({
-                startCEWithVpnCheck("A")
-                Log.d(TAG, "Service started after force close (7s delay)")
-            }, 7000) // 7 saat delay - SAFE TIMING
-        }*/
-
-        // UBAH BUTTON START:
         btnOnA.setOnClickListener {
             Log.d(TAG, "BUTTON START CLICKED - AUTO DNS SELECTION")
             
@@ -399,21 +377,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /*private fun startCEWithVpnCheck(dnsType: String) {
-        // 1. Check jika VPN dah approve
-        val vpnIntent = VpnService.prepare(this)
-        
-        if (vpnIntent != null) {
-            // BELUM APPROVE: Show popup dulu
-            startActivityForResult(vpnIntent, 100)
-            // Simpan dnsType untuk guna lepas approve
-            pendingDNS = dnsType
-        } else {
-            // DAH APPROVE: Start CE seperti biasa
-            startCoreEngine(dnsType)
-        }
-    }*/
-
     // UBAH FUNCTION startCEWithVpnCheck:
     private fun startCEWithVpnCheck(dnsType: String = "auto") { // 🟢 DEFAULT "auto"
         // 1. Check jika VPN dah approve
@@ -429,13 +392,6 @@ class MainActivity : AppCompatActivity() {
             startCoreEngine(dnsType) // 🟢 Pass "auto"
         }
     }
-
-    /*override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == 100 && resultCode == RESULT_OK) {
-            // SEKARANG VPN DAH APPROVE
-            startCoreEngine(pendingDNS)
-        }
-    }*/
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == 100 && resultCode == RESULT_OK) {
