@@ -93,13 +93,60 @@ class VpnDnsService : VpnService() {
     /**
      * GET DNS SERVERS berdasarkan type
      */
-    private fun getDnsServers(type: String): List<String> {
+    /*private fun getDnsServers(type: String): List<String> {
         return when (type.uppercase()) {
             "A" -> listOf("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001")
             "B" -> listOf("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844")
             else -> listOf("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9")
         }.also {
             currentDns = it.first()
+        }
+    }*/
+
+    /**
+     * Dapatkan DNS type optimal secara auto
+     */
+    private fun getOptimalDnsType(): String {
+        return try {
+            // Check DNS mana paling bagus untuk Panda
+            val bestDns = DnsQualityChecker.selectBestDnsForPanda()
+            
+            // Map ke DNS type berdasarkan server terpilih
+            when {
+                bestDns.startsWith("1.1.1.1") || bestDns.startsWith("1.0.0.1") -> {
+                    LogUtil.d(TAG, "✅ Selected Cloudflare DNS ($bestDns)")
+                    "A" // Cloudflare group
+                }
+                bestDns.startsWith("8.8.") -> {
+                    LogUtil.d(TAG, "✅ Selected Google DNS ($bestDns)")
+                    "B" // Google group
+                }
+                else -> {
+                    LogUtil.d(TAG, "✅ Selected Other DNS ($bestDns)")
+                    "C" // Other group
+                }
+            }
+        } catch (e: Exception) {
+            LogUtil.e(TAG, "DNS selection error, using default: ${e.message}")
+            "A" // Fallback ke Cloudflare
+        }
+    }
+    
+    /**
+     * GET DNS SERVERS dengan auto-selection
+     * MODIFY FUNCTION YANG SUDAH ADA:
+     */
+    private fun getDnsServers(type: String): List<String> {
+        // Jika type = "auto", pilih optimal
+        val effectiveType = if (type == "auto") getOptimalDnsType() else type
+        
+        return when (effectiveType.uppercase()) {
+            "A" -> listOf("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001")
+            "B" -> listOf("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844")
+            else -> listOf("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9")
+        }.also {
+            currentDns = it.first()
+            LogUtil.d(TAG, "Using DNS servers: $it (Type: $effectiveType)")
         }
     }
     
@@ -108,9 +155,8 @@ class VpnDnsService : VpnService() {
      */
     private fun setupDnsOnlyVpn(dnsType: String): Boolean {
         return try {
-            LogUtil.d(TAG, "Setting up DNS-only VPN, DNS Type: $dnsType")
-            currentDnsType = dnsType
-            
+            currentDnsType = if (dnsType == "auto") getOptimalDnsType() else dnsType
+           
             val dnsServers = getDnsServers(dnsType)
             
             val builder = Builder()
