@@ -187,16 +187,22 @@ class VpnDnsService : VpnService() {
                 }
             }
             
-            dnsServers.take(2).forEach { dns ->
+            // ⬅️ FIX 1: GUNA SEMUA DNS SERVERS, BUKAN take(2)
+            dnsServers.forEach { dns ->
                 builder.addDnsServer(dns)
             }
             
-            dnsServers.take(2).forEach { dns ->
-                if (dns.contains('.')) {
-                    builder.addRoute(dns, 32)
-                }
+            // ⬅️ FIX 2: ROUTE UNTUK SEMUA IPv4 DNS
+            dnsServers.filter { it.contains('.') }.forEach { dns ->
+                builder.addRoute(dns, 32)
             }
             
+            // ⬅️ FIX 3: TAMBAH ROUTE UNTUK IPv6 (JIKA ADA)
+            dnsServers.filter { it.contains(':') }.forEach { dns ->
+                builder.addRoute(dns, 128)
+            }
+            
+            // Existing routes...
             builder.addRoute("203.82.91.14", 32)
             builder.addRoute("203.82.91.30", 32)
             
