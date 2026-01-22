@@ -153,8 +153,8 @@ class VpnDnsService : VpnService() {
         
         return when (effectiveType.uppercase()) {
             "A" -> listOf("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001")
-            "B" -> listOf("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844")
-            else -> listOf("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4") // ⬅️ HYBRID FALLBACK
+            "B" -> listOf("8.8.4.4", "2001:4860:4860::8844")
+            else -> listOf("1.1.1.1", "1.0.0.1", "8.8.4.4") // ⬅️ HYBRID FALLBACK
         }.also {
             currentDns = it.first()
             LogUtil.d(TAG, "Using DNS servers: $it (Type: $effectiveType)")
@@ -438,8 +438,8 @@ class VpnDnsService : VpnService() {
     private fun tryFallbackDns(queryPacket: DatagramPacket, dnsSocket: DatagramSocket) {
         val fallbackServers = listOf(
             "1.1.1.1",           // Cloudflare
-            "8.8.8.8",           // Google
-            "185.222.222.222"    // DNS.SB (ganti 9.9.9.9)
+            "8.8.4.4",           // Google
+            "1.0.0.1"    // DNS.SB (ganti 9.9.9.9)
         )
         val queryData = queryPacket.data.copyOf(queryPacket.length)
         
