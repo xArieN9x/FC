@@ -35,14 +35,14 @@ class DnsQualityChecker {
         private val DNS_CANDIDATES = listOf(
             "1.1.1.1",          // Cloudflare Primary
             "1.0.0.1",          // Cloudflare Secondary
-            "8.8.8.8",          // Google Primary
+            //"8.8.8.8",          // Google Primary
             "8.8.4.4"           // Google Secondary
         )
 
         // ⬅️ SIMPLIFIED CANDIDATES FOR PEAK HOUR
         private val PEAK_HOUR_CANDIDATES = listOf(
             "1.1.1.1",          // Cloudflare
-            "8.8.8.8"           // Google
+            "8.8.4.4"           // Google
         )
 
         // ===== MEMORY: simpan sejarah =====
