@@ -168,54 +168,31 @@ class AccessibilityAutomationService : AccessibilityService() {
     private fun startAutomationSequence() {
         if (isAutomationRunning) return
         
-        Log.i(TAG, "=== STARTING AUTOMATION SEQUENCE WITH DNS OPTIMIZATION ===")
+        Log.i(TAG, "=== STARTING AUTOMATION SEQUENCE ===")
         isAutomationRunning = true
         
         Log.d(TAG, "Step 1: Force Stop + Clear Cache")
         performForceCloseAndClearCache()
         
-        // Existing timing: 8s after Step 1
+        // ⏱️ TIMING IMPROVEMENT: Tambah delay
         handler.postDelayed({
             Log.d(TAG, "Step 2: Airplane Mode ON→OFF")
             toggleAirplaneMode(true)
-        }, 8000)
+        }, 8000) // 7000 → 8000
         
-        // 🟢 NEW: DNS Optimization 8s after Step 2 (total 16s)
+        // ⏱️ TIMING IMPROVEMENT: Lebih lama untuk VPN stabil
         handler.postDelayed({
-            Log.d(TAG, "Step 3: DNS Optimization")
-            optimizeDnsConnection()
-        }, 16000) // 8000 + 8000
-        
-        // Existing timing adjusted: Restart CoreEngine 8s after DNS (total 24s)
-        handler.postDelayed({
-            Log.d(TAG, "Step 4: Restarting CoreEngine")
+            Log.d(TAG, "Step 3: Restarting CoreEngine")
             restartCoreEngine()
-        }, 24000) // 16000 + 8000
+        }, 16000) // 14000 → 16000
         
-        // Existing timing: Launch Panda 4s after Restart (total 28s)
+        // ⏱️ TIMING IMPROVEMENT
         handler.postDelayed({
-            Log.d(TAG, "Step 5: Launching Panda app")
+            Log.d(TAG, "Step 4: Launching Panda app")
             launchPandaApp()
             isAutomationRunning = false
             Log.i(TAG, "=== AUTOMATION SEQUENCE COMPLETE ===")
-        }, 28000) // 24000 + 4000
-    }
-    
-    // TAMBAH FUNCTION DNS OPTIMIZATION:
-    private fun optimizeDnsConnection() {
-        Log.d(TAG, "🔄 Starting DNS optimization...")
-        
-        try {
-            // 1. Broadcast ke VpnDnsService untuk optimize
-            val intent = Intent("OPTIMIZE_DNS_NOW")
-            LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-            
-            // 2. Log sahaja, tak perlu delay (VPN service handle sendiri)
-            Log.d(TAG, "✅ DNS optimization signal sent")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "DNS optimization error: ${e.message}")
-        }
+        }, 20000) // 18000 → 20000
     }
 
     // ==================== FLOW BARU: GABUNG FORCE STOP & CLEAR CACHE ====================
