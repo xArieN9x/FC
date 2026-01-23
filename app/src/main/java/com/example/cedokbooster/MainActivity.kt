@@ -47,7 +47,7 @@ class MainActivity : AppCompatActivity() {
 
     private var currentDns: String = "none"
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    //private var pendingDNS = "A" // default
+    private var pendingDNS = "A" // default
 
     companion object {
         private const val TAG = "MainActivity"
@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnOnA.setOnClickListener {
-            Log.d(TAG, "BUTTON START CLICKED - AUTO DNS SELECTION")
+            Log.d(TAG, "BUTTON START CLICKED")
             
             if (!isAccessibilityEnabled()) {
                 Toast.makeText(this, "Sila enable Accessibility Service dulu!", Toast.LENGTH_LONG).show()
@@ -114,10 +114,9 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Force closing Panda app...", Toast.LENGTH_SHORT).show()
             
             Handler(Looper.getMainLooper()).postDelayed({
-                // 🟢 GANTI: startCEWithVpnCheck("A") dengan auto selection
-                startCEWithVpnCheck() 
-                Log.d(TAG, "Service started with AUTO DNS selection (7s delay)")
-            }, 7000)
+                startCEWithVpnCheck("A")
+                Log.d(TAG, "Service started after force close (7s delay)")
+            }, 7000) // 7 saat delay - SAFE TIMING
         }
 
         btnOnB.setOnClickListener {
@@ -134,12 +133,11 @@ class MainActivity : AppCompatActivity() {
             
             // 2. Stop VPN
             handler.postDelayed({
+            //Log.d(TAG, "Stop VPN")
             VpnDnsService.stopVpn(this)
-           
-            Toast.makeText(this@MainActivity, "Phone in Normal Mode", Toast.LENGTH_SHORT).show()
-            
-            Log.d(TAG, "VPN stopped and toast shown")
             }, 3000)
+                  
+            Toast.makeText(this, "Phone in Normal Mode", Toast.LENGTH_SHORT).show()
         }
 
         btnDoAllJob.setOnClickListener {
@@ -173,64 +171,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun executeFullExit() {
-        Log.d(TAG, "🛑 FULL EXIT STARTED")
-        
-        // 1. Stop CoreEngine dulu, TUNGGU sampai dia callback selesai
-        stopCoreEngineWithCallback { coreEngineStopped ->
-            if (coreEngineStopped) {
-                Log.d(TAG, "✅ CoreEngine stopped, now stopping VPN...")
-                
-                // 2. Stop VPN setelah CoreEngine selesai
-                VpnDnsService.stopVpn(this@MainActivity)
-                
-                // Beri masa 3 saat untuk VPN cleanup
-                Handler(Looper.getMainLooper()).postDelayed({
-                    Log.d(TAG, "✅ VPN should be stopped, now stopping widget...")
-                    
-                    // 3. Stop widget
-                    stopFloatingWidget()
-                    
-                    // 4. Final kill setelah semua selesai
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        Log.d(TAG, "✅ All services stopped, final kill...")
-                        forceStopManager.stopEverythingNuclear()
-                        finishAffinity()
-                    }, 2000) // Tunggu 2s untuk widget stop
-                    
-                }, 3000) // Tunggu 3s untuk VPN stop
-            }
-        }
-    }
-    
-    private fun stopCoreEngineWithCallback(callback: (Boolean) -> Unit) {
-        Log.d(TAG, "Stopping CoreEngine with callback...")
-        
-        // Simpan original state
-        val wasRunning = currentDns != "none"
-        
-        // Trigger stop
+        // 1. Stop CoreEngine
         stopCoreEngine()
         
-        // Check status setiap 500ms
-        val handler = Handler(Looper.getMainLooper())
-        val checkRunnable = object : Runnable {
-            var attempts = 0
-            override fun run() {
-                attempts++
-                
-                // Check jika CoreEngine dah stop (currentDns == "none")
-                if (currentDns == "none" || attempts > 10) { // Max 5 saat
-                    Log.d(TAG, "CoreEngine stop confirmed: ${currentDns == "none"}")
-                    callback(currentDns == "none")
-                } else {
-                    // Check lagi
-                    handler.postDelayed(this, 500)
-                }
-            }
-        }
-        handler.postDelayed(checkRunnable, 1000)
+        // 2. Stop VPN
+        handler.postDelayed({
+        //Log.d(TAG, "Stop VPN")
+        VpnDnsService.stopVpn(this)
+        }, 3000)
+        
+        // 3. Stop Floating Widget
+        handler.postDelayed({
+        //Log.d(TAG, "Stop Floating Widget")
+        stopFloatingWidget()
+        }, 3000)
+        
+        // 4. Delay pendek sebelum kill app
+        Handler(Looper.getMainLooper()).postDelayed({
+            // Kill process dengan clean
+            forceStopManager.stopEverythingNuclear()
+            System.exit(0)
+        }, 3000)
     }
-
+    
     private fun stopFloatingWidget() {
         try {
             val serviceIntent = Intent(this, FloatingWidgetService::class.java)
@@ -377,26 +340,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // UBAH FUNCTION startCEWithVpnCheck:
-    private fun startCEWithVpnCheck(dnsType: String = "auto") { // 🟢 DEFAULT "auto"
+    private fun startCEWithVpnCheck(dnsType: String) {
         // 1. Check jika VPN dah approve
         val vpnIntent = VpnService.prepare(this)
         
         if (vpnIntent != null) {
             // BELUM APPROVE: Show popup dulu
             startActivityForResult(vpnIntent, 100)
-            // 🟢 Simpan sebagai "auto"
-            // pendingDNS = dnsType // 🗑️ BUANG
+            // Simpan dnsType untuk guna lepas approve
+            pendingDNS = dnsType
         } else {
-            // DAH APPROVE: Start CE dengan DNS type
-            startCoreEngine(dnsType) // 🟢 Pass "auto"
+            // DAH APPROVE: Start CE seperti biasa
+            startCoreEngine(dnsType)
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == 100 && resultCode == RESULT_OK) {
             // SEKARANG VPN DAH APPROVE
-            startCoreEngine("auto") // 🟢 Start dengan auto selection
+            startCoreEngine(pendingDNS)
         }
     }
 
