@@ -9,12 +9,16 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.*
 import androidx.core.app.NotificationCompat
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.delay // 👈 TAMBAH IMPORT INI
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.util.*
-import java.util.concurrent.*
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -40,14 +44,6 @@ class VpnDnsService : VpnService() {
         
         private var isRunning = AtomicBoolean(false)
         private var currentDns = "1.0.0.1"
-
-        // DNS Health Monitor - ENHANCED SETTINGS
-        private const val HEALTH_CHECK_INTERVAL = 600_000L // 10 minit
-        private const val SWITCH_THRESHOLD_NORMAL = 20
-        private const val SWITCH_THRESHOLD_PEAK = 30
-        private const val MAX_SWITCHES_30MIN = 5
-        private const val DISABLE_DURATION = 1_800_000L // 30 minit
-        private const val QUALITY_CHECK_TIMEOUT = 10_000L // 10 saat (dari 5)
         
         fun startVpn(context: Context, dnsType: String = "A") {
             val intent = Intent(context, VpnDnsService::class.java).apply {
@@ -83,81 +79,27 @@ class VpnDnsService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var dnsProxyThread: Thread? = null
     private var dnsProxySocket: DatagramSocket? = null
-    private val executor: ExecutorService = Executors.newFixedThreadPool(2) // ⬅️ KURANGKAN THREAD
-    private val coroutineScope = CoroutineScope(
-        Dispatchers.IO + SupervisorJob() + CoroutineExceptionHandler { _, e ->
-            LogUtil.e(TAG, "🔥 Coroutine crash: ${e.message}")
-        }
-    ) // ⬅️ TAMBAH SUPERVISOR & EXCEPTION HANDLER
-    
+    private val executor: ExecutorService = Executors.newFixedThreadPool(4)
+    private val coroutineScope = CoroutineScope(Dispatchers.IO)
     private var currentDnsType = "A"
-    private var startIntent: Intent? = null
+    private var startIntent: Intent? = null // 👈 SIMPAN INTENT REFERENCE
     
     // Restart stability
     private val isRestarting = AtomicBoolean(false)
     private val restartCount = AtomicInteger(0)
+    //private const val MAX_RESTARTS_PER_MINUTE = 3
     private val handler = Handler(Looper.getMainLooper())
-
-    // DNS Health Monitor - ENHANCED VARIABLES
-    private var dnsHealthMonitorJob: Job? = null
-    private var switchCounterJob: Job? = null
-    private val switchCount = AtomicInteger(0)
-    private val switchTimes = Collections.synchronizedList(mutableListOf<Long>()) // ⬅️ THREAD-SAFE
-    private var autoSwitchEnabled = AtomicBoolean(true)
-    private var lastHealthCheckTime = 0L
-    private var qualityCheckFailCount = AtomicInteger(0) // ⬅️ CIRCUIT BREAKER COUNTER
-    
-    // PEAK HOUR SCHEDULE
-    private val peakHoursWeekday = listOf(
-        Pair(630, 900),    // 6:30-9:00
-        Pair(1130, 1400),  // 11:30-14:00
-        Pair(1630, 1900),  // 16:30-19:00
-        Pair(1930, 2130)   // 19:30-21:30
-    )
-    
-    private val peakHoursWeekend = listOf(
-        Pair(630, 1000),   // 6:30-10:00
-        Pair(1130, 1400),  // 11:30-14:00
-        Pair(1630, 1900),  // 16:30-19:00
-        Pair(1930, 2230)   // 19:30-22:30
-    )
-        
-    /**
-     * Dapatkan DNS type optimal secara auto
-     */
-    private fun getOptimalDnsType(): String {
-        return try {
-            val bestDns = DnsQualityChecker.selectBestDnsForPanda(isPeakHour())
-            
-            when {
-                bestDns == "1.1.1.1" || bestDns == "1.0.0.1" -> {
-                    LogUtil.d(TAG, "✅ Selected Cloudflare DNS ($bestDns)")
-                    "A"
-                }
-                else -> { // 8.8.8.8 or 8.8.4.4
-                    LogUtil.d(TAG, "✅ Selected Google DNS ($bestDns)")
-                    "B"
-                }
-            }
-        } catch (e: Exception) {
-            LogUtil.e(TAG, "DNS selection error, using default: ${e.message}")
-            "A" // Fallback ke Cloudflare
-        }
-    }
     
     /**
-     * GET DNS SERVERS - ENHANCED
+     * GET DNS SERVERS berdasarkan type
      */
     private fun getDnsServers(type: String): List<String> {
-        val effectiveType = if (type == "auto") getOptimalDnsType() else type
-        
-        return when (effectiveType.uppercase()) {
+        return when (type.uppercase()) {
             "A" -> listOf("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001")
-            "B" -> listOf("8.8.4.4", "2001:4860:4860::8844")
-            else -> listOf("1.1.1.1", "1.0.0.1", "8.8.4.4") // ⬅️ HYBRID FALLBACK
+            "B" -> listOf("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844")
+            else -> listOf("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9")
         }.also {
             currentDns = it.first()
-            LogUtil.d(TAG, "Using DNS servers: $it (Type: $effectiveType)")
         }
     }
     
@@ -166,9 +108,10 @@ class VpnDnsService : VpnService() {
      */
     private fun setupDnsOnlyVpn(dnsType: String): Boolean {
         return try {
-            currentDnsType = if (dnsType == "auto") getOptimalDnsType() else dnsType
-           
-            val dnsServers = getDnsServers(currentDnsType)
+            LogUtil.d(TAG, "Setting up DNS-only VPN, DNS Type: $dnsType")
+            currentDnsType = dnsType
+            
+            val dnsServers = getDnsServers(dnsType)
             
             val builder = Builder()
                 .setSession("CedokDNS-$dnsType")
@@ -176,6 +119,7 @@ class VpnDnsService : VpnService() {
                 .setMtu(1280)
                 .setBlocking(true)
             
+            // System apps boleh bypass DNS kita
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
                     builder.addDisallowedApplication("com.android.systemui")
@@ -187,34 +131,34 @@ class VpnDnsService : VpnService() {
                 }
             }
             
-            // ⬅️ FIX 1: GUNA SEMUA DNS SERVERS, BUKAN take(2)
-            dnsServers.forEach { dns ->
+            // Set DNS servers
+            dnsServers.take(2).forEach { dns ->
                 builder.addDnsServer(dns)
             }
             
-            // ⬅️ FIX 2: ROUTE UNTUK SEMUA IPv4 DNS
-            dnsServers.filter { it.contains('.') }.forEach { dns ->
-                builder.addRoute(dns, 32)
+            // Route ke DNS servers
+            dnsServers.take(2).forEach { dns ->
+                if (dns.contains('.')) {
+                    builder.addRoute(dns, 32)
+                }
             }
             
-            // ⬅️ FIX 3: TAMBAH ROUTE UNTUK IPv6 (JIKA ADA)
-            dnsServers.filter { it.contains(':') }.forEach { dns ->
-                builder.addRoute(dns, 128)
-            }
-            
-            // Existing routes...
+            // Route ke Telco DNS
             builder.addRoute("203.82.91.14", 32)
             builder.addRoute("203.82.91.30", 32)
             
+            // Route ke popular services
             builder.addRoute("142.250.0.0", 16)
             builder.addRoute("13.0.0.0", 8)
             builder.addRoute("34.0.0.0", 8)
             
+            // Establish VPN
             val fd = builder.establish()
             if (fd != null) {
                 vpnInterface = fd
                 LogUtil.d(TAG, "✅ VPN established dengan DNS: ${dnsServers.first()}")
                 
+                // Start DNS proxy
                 coroutineScope.launch {
                     startDnsProxy(dnsServers)
                 }
@@ -232,9 +176,10 @@ class VpnDnsService : VpnService() {
     }
     
     /**
-     * DNS PROXY - ENHANCED WITH WATCHDOG
+     * DNS PROXY dengan STABILITY IMPROVEMENTS
      */
     private fun startDnsProxy(dnsServers: List<String>) {
+        // Check jika sedang restart
         if (isRestarting.get()) {
             LogUtil.w(TAG, "⚠️ Skipping DNS start - restart in progress")
             return
@@ -243,6 +188,7 @@ class VpnDnsService : VpnService() {
         LogUtil.d(TAG, "Starting DNS proxy dengan servers: $dnsServers")
         
         try {
+            // Graceful cleanup sebelum start baru
             dnsProxyThread?.let { thread ->
                 if (thread.isAlive) {
                     thread.interrupt()
@@ -256,13 +202,15 @@ class VpnDnsService : VpnService() {
             
             dnsProxySocket?.close()
             
-            Thread.sleep(100)
+            Thread.sleep(100) // Small delay untuk cleanup
             
             var socket: DatagramSocket? = null
             var selectedPort = -1
             
+            // Cuba setiap port dalam strategy
             for (port in PORT_STRATEGY) {
                 try {
+                    // Try release port
                     try {
                         Runtime.getRuntime().exec(arrayOf(
                             "sh", "-c", 
@@ -271,11 +219,13 @@ class VpnDnsService : VpnService() {
                         ))
                         Thread.sleep(50)
                     } catch (e: Exception) {
+                        // Ignore untuk non-root
                     }
                     
+                    // Cuba bind ke port
                     socket = DatagramSocket(null).apply {
                         reuseAddress = true
-                        soTimeout = 0
+                        soTimeout = 0  // 🔥 NO TIMEOUT - BLOCK FOREVER
                         bind(java.net.InetSocketAddress(port))
                     }
                     
@@ -302,40 +252,37 @@ class VpnDnsService : VpnService() {
             
             dnsProxySocket = socket
             
+            // Start proxy thread dengan STABILITY FIXES
             dnsProxyThread = Thread {
                 LogUtil.d(TAG, "🔁 DNS Proxy thread STARTED on port $selectedPort")
                 
                 try {
                     while (!Thread.currentThread().isInterrupted && isRunning.get()) {
                         try {
+                            // Receive DNS query - BLOCK FOREVER (soTimeout = 0)
                             val buffer = ByteArray(512)
                             val packet = DatagramPacket(buffer, buffer.size)
                             dnsProxySocket!!.receive(packet)
                             
+                            // Process query
                             executor.submit {
                                 handleDnsQuery(packet, dnsServers)
                             }
                             
                         } catch (e: java.net.SocketTimeoutException) {
+                            // Tidak akan terjadi kerana soTimeout = 0
                             continue
                         } catch (e: Exception) {
                             if (isRunning.get() && !Thread.currentThread().isInterrupted) {
                                 LogUtil.w(TAG, "DNS Proxy error: ${e.message}")
+                                // Continue loop - jangan crash
                             }
                         }
                     }
-                } catch (e: Throwable) {
-                    LogUtil.e(TAG, "🔥 DNS Proxy crashed: ${e.message}")
-                    // Auto-recovery dalam 5 saat
-                    coroutineScope.launch {
-                        delay(5000)
-                        if (isRunning.get() && !isRestarting.get()) {
-                            LogUtil.d(TAG, "🔄 Auto-recovering DNS proxy...")
-                            startDnsProxy(dnsServers)
-                        }
-                    }
                 } finally {
-                    LogUtil.d(TAG, "🔴 DNS Proxy thread EXITING")
+                    LogUtil.d(TAG, "🔴 DNS Proxy thread EXITING. " +
+                                  "Interrupted: ${Thread.currentThread().isInterrupted}, " +
+                                  "isRunning: ${isRunning.get()}")
                 }
             }
             
@@ -348,8 +295,9 @@ class VpnDnsService : VpnService() {
         } catch (e: Exception) {
             LogUtil.e(TAG, "💥 Failed to start DNS proxy: ${e.message}")
             
+            // Retry dengan exponential backoff
             coroutineScope.launch {
-                delay(3000)
+                delay(3000) // 👈 FIXED: guna delay() bukan kotlinx.coroutines.delay()
                 if (isRunning.get() && !isRestarting.get()) {
                     LogUtil.d(TAG, "🔄 Retrying DNS proxy...")
                     startDnsProxy(dnsServers)
@@ -369,15 +317,18 @@ class VpnDnsService : VpnService() {
             val clientPort = queryPacket.port
             val queryData = queryPacket.data.copyOf(queryPacket.length)
             
+            // Decode DNS ID
             val queryId = if (queryData.size >= 2) {
                 ((queryData[0].toInt() and 0xFF) shl 8) or (queryData[1].toInt() and 0xFF)
             } else 0
             
             LogUtil.d(TAG, "📡 DNS Query #$queryId from $clientIp:$clientPort")
             
+            // Gunakan protect() untuk elak loop
             val dnsSocket = DatagramSocket()
             protect(dnsSocket)
             
+            // Cuba semua DNS servers
             var success = false
             val filteredServers = dnsServers.filter { it.contains('.') }
             
@@ -433,14 +384,10 @@ class VpnDnsService : VpnService() {
     }
     
     /**
-     * FALLBACK DNS - ENHANCED
+     * FALLBACK DNS
      */
     private fun tryFallbackDns(queryPacket: DatagramPacket, dnsSocket: DatagramSocket) {
-        val fallbackServers = listOf(
-            "1.1.1.1",           // Cloudflare
-            "8.8.4.4",           // Google
-            "1.0.0.1"    // DNS.SB (ganti 9.9.9.9)
-        )
+        val fallbackServers = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
         val queryData = queryPacket.data.copyOf(queryPacket.length)
         
         for (dns in fallbackServers) {
@@ -477,362 +424,9 @@ class VpnDnsService : VpnService() {
         
         LogUtil.e(TAG, "💥 All DNS servers failed")
     }
-
-    // ====================== ENHANCED FUNCTIONS ======================
     
     /**
-     * START DNS HEALTH MONITOR - ENHANCED
-     */
-    private fun startDnsHealthMonitor() {
-        dnsHealthMonitorJob?.cancel()
-        dnsHealthMonitorJob = coroutineScope.launch {
-            while (isRunning.get()) {
-                delay(HEALTH_CHECK_INTERVAL) // 10 minit
-                
-                lastHealthCheckTime = System.currentTimeMillis()
-                
-                // Check jika auto-switch disabled
-                if (!autoSwitchEnabled.get()) {
-                    LogUtil.d(TAG, "⏸️ Auto-switch disabled (cooling down)")
-                    continue
-                }
-                
-                // Circuit breaker check
-                if (qualityCheckFailCount.get() >= 3) {
-                    LogUtil.w(TAG, "⏸️ Circuit breaker active - skipping check")
-                    // Reset setelah 30 minit
-                    coroutineScope.launch {
-                        delay(1_800_000L)
-                        qualityCheckFailCount.set(0)
-                        LogUtil.d(TAG, "✅ Circuit breaker reset")
-                    }
-                    continue
-                }
-                
-                // Health check 2 domain critical
-                val healthResult = checkCriticalDomainsHealth()
-                
-                when (healthResult) {
-                    2 -> { // 2/2 OK
-                        LogUtil.d(TAG, "✅ Both critical domains OK")
-                        // Skip switch
-                    }
-                    1 -> { // 1/2 OK
-                        LogUtil.w(TAG, "⚠️ 1/2 critical domains OK - Warning only")
-                        // Log warning, tapi skip switch
-                    }
-                    0 -> { // 0/2 OK
-                        LogUtil.w(TAG, "🚨 0/2 critical domains OK - Starting evaluation")
-                        // Start comprehensive evaluation
-                        evaluateAndSwitchIfNeeded()
-                    }
-                }
-            }
-        }
-        
-        // Start switch counter cleanup
-        startSwitchCounterCleanup()
-    }
-    
-    /**
-     * CHECK CRITICAL DOMAINS (2 DOMAIN SAHAJA)
-     */
-    private fun checkCriticalDomainsHealth(): Int {
-        var successCount = 0
-        
-        val criticalDomains = listOf(
-            "my.usehurrier.com",
-            "perseus-productanalytics.deliveryhero.net"
-        )
-        
-        criticalDomains.forEach { domain ->
-            if (checkSingleDomain(domain)) {
-                successCount++
-            }
-        }
-        
-        return successCount
-    }
-    
-    /**
-     * CHECK SINGLE DOMAIN - WITH TIMEOUT
-     */
-    private fun checkSingleDomain(domain: String): Boolean {
-        return try {
-            val start = System.nanoTime()
-            // ⬅️ GUNA DnsQualityChecker.quickDnsCheck UTK CEPAT
-            val success = DnsQualityChecker.quickDnsCheck(domain)
-            val latency = (System.nanoTime() - start) / 1_000_000
-            
-            if (success && latency in 10..500) {
-                LogUtil.d(TAG, "✅ $domain OK (${latency}ms)")
-                true
-            } else {
-                LogUtil.w(TAG, "⚠️ $domain slow/failed (${latency}ms)")
-                false
-            }
-        } catch (e: Exception) {
-            LogUtil.e(TAG, "❌ $domain check error: ${e.message}")
-            false
-        }
-    }
-    
-    /**
-     * EVALUATE AND SWITCH IF NEEDED - ENHANCED
-     */
-    private fun evaluateAndSwitchIfNeeded() {
-        coroutineScope.launch {
-            try {
-                // TIMEOUT FOR ENTIRE EVALUATION
-                withTimeout(QUALITY_CHECK_TIMEOUT) {
-                    // 1. Kira score DNS current (LIGHTWEIGHT)
-                    val currentDnsServer = getDnsServers(currentDnsType).first()
-                    val currentScore = getCurrentDnsScore(currentDnsServer)
-                    
-                    LogUtil.d(TAG, "📊 Current DNS score: $currentScore")
-                    
-                    // 2. Dapatkan best competitor score
-                    val bestCompetitor = DnsQualityChecker.selectBestDnsForPanda(isPeakHour())
-                    val bestScore = getDnsServerScore(bestCompetitor)
-                    
-                    LogUtil.d(TAG, "📊 Best competitor: $bestCompetitor ($bestScore)")
-                    
-                    // 3. Dapatkan threshold (peak hour adjust)
-                    val threshold = getSwitchThreshold()
-                    
-                    // 4. Bandingkan
-                    val scoreDifference = bestScore - currentScore
-                    
-                    if (scoreDifference >= threshold) {
-                        LogUtil.d(TAG, "✅ Score difference $scoreDifference >= $threshold")
-                        performSmartSwitch(bestCompetitor)
-                    } else {
-                        LogUtil.d(TAG, "⏸️ Score difference $scoreDifference < $threshold - Skip switch")
-                    }
-                    
-                    // Reset fail count kalau success
-                    qualityCheckFailCount.set(0)
-                }
-            } catch (e: TimeoutCancellationException) {
-                LogUtil.e(TAG, "⏰ Evaluation timeout - network busy")
-                qualityCheckFailCount.incrementAndGet()
-            } catch (e: Exception) {
-                LogUtil.e(TAG, "🔥 Evaluation failed: ${e.message}")
-                qualityCheckFailCount.incrementAndGet()
-            }
-        }
-    }
-    
-    /**
-     * GET CURRENT DNS SCORE - OPTIMIZED
-     */
-    private fun getCurrentDnsScore(dnsServer: String): Int {
-        return try {
-            // ⬅️ GUNA LIGHTWEIGHT CHECK WAKTU PEAK
-            val result = if (isPeakHour()) {
-                DnsQualityChecker.quickCheckForPanda(dnsServer)
-            } else {
-                DnsQualityChecker.checkDnsForPanda(dnsServer)
-            }
-            result.score
-        } catch (e: Exception) {
-            LogUtil.e(TAG, "Failed to get current DNS score: ${e.message}")
-            50 // fallback score tengah-tengah
-        }
-    }
-    
-    /**
-     * GET DNS SERVER SCORE - OPTIMIZED
-     */
-    private fun getDnsServerScore(dnsServer: String): Int {
-        return try {
-            // ⬅️ GUNA LIGHTWEIGHT CHECK WAKTU PEAK
-            if (isPeakHour()) {
-                DnsQualityChecker.quickCheckForPanda(dnsServer).score
-            } else {
-                DnsQualityChecker.checkDnsForPanda(dnsServer).score
-            }
-        } catch (e: Exception) {
-            LogUtil.e(TAG, "Failed to get DNS score: ${e.message}")
-            50
-        }
-    }
-    
-    /**
-     * GET SWITCH THRESHOLD (PEAK HOUR AWARE)
-     */
-    private fun getSwitchThreshold(): Int {
-        return if (isPeakHour()) {
-            LogUtil.d(TAG, "⏰ Peak hour detected - Higher threshold")
-            SWITCH_THRESHOLD_PEAK
-        } else {
-            SWITCH_THRESHOLD_NORMAL
-        }
-    }
-    
-    /**
-     * CHECK PEAK HOUR - WITH TIMEZONE FIX
-     */
-    private fun isPeakHour(): Boolean {
-        try {
-            val calendar = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kuala_Lumpur"))
-            val hour = calendar.get(Calendar.HOUR_OF_DAY)
-            val minute = calendar.get(Calendar.MINUTE)
-            val currentTime = hour * 100 + minute
-            
-            val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
-            val isWeekend = dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY
-            
-            val peakHours = if (isWeekend) peakHoursWeekend else peakHoursWeekday
-            
-            return peakHours.any { (start, end) ->
-                currentTime in start..end
-            }
-        } catch (e: Exception) {
-            LogUtil.e(TAG, "Peak hour check error: ${e.message}")
-            return false
-        }
-    }
-    
-    /**
-     * PERFORM SMART SWITCH - ENHANCED
-     */
-    private fun performSmartSwitch(bestDns: String) {
-        // Check switch limit
-        if (!checkSwitchLimit()) {
-            LogUtil.w(TAG, "🚨 Switch limit reached - Auto-switch disabled")
-            return
-        }
-        
-        val newType = when {
-            bestDns == "1.1.1.1" || bestDns == "1.0.0.1" -> "A"
-            else -> "B" // 8.8.8.8 or 8.8.4.4
-        }
-        
-        if (newType != currentDnsType) {
-            LogUtil.d(TAG, "🔄 Smart switch DNS $currentDnsType → $newType")
-            
-            // Record switch
-            recordSwitch()
-            
-            // Perform switch
-            currentDnsType = newType
-            performSoftRestart()
-            notifyDnsSwitch(bestDns)
-        } else {
-            LogUtil.d(TAG, "ℹ️ DNS type already optimal ($currentDnsType)")
-        }
-    }
-    
-    /**
-     * RECORD SWITCH (FOR LIMIT CHECK)
-     */
-    private fun recordSwitch() {
-        val now = System.currentTimeMillis()
-        synchronized(switchTimes) {
-            switchTimes.add(now)
-        }
-        switchCount.incrementAndGet()
-        
-        LogUtil.d(TAG, "📝 Switch recorded: ${switchCount.get()}/$MAX_SWITCHES_30MIN")
-    }
-    
-    /**
-     * CHECK SWITCH LIMIT - ENHANCED
-     */
-    private fun checkSwitchLimit(): Boolean {
-        if (!autoSwitchEnabled.get()) {
-            return false
-        }
-        
-        val now = System.currentTimeMillis()
-        val thirtyMinutesAgo = now - 1_800_000L // 30 minit
-        
-        // Clean old switches - THREAD-SAFE
-        synchronized(switchTimes) {
-            switchTimes.removeAll { it < thirtyMinutesAgo }
-            
-            // Check if limit exceeded
-            if (switchTimes.size >= MAX_SWITCHES_30MIN) {
-                autoSwitchEnabled.set(false)
-                LogUtil.w(TAG, "🚫 Auto-switch disabled for $DISABLE_DURATION ms")
-                
-                // Schedule re-enable
-                coroutineScope.launch {
-                    delay(DISABLE_DURATION)
-                    autoSwitchEnabled.set(true)
-                    switchTimes.clear()
-                    LogUtil.d(TAG, "✅ Auto-switch re-enabled")
-                }
-                
-                return false
-            }
-        }
-        
-        return true
-    }
-    
-    /**
-     * START SWITCH COUNTER CLEANUP
-     */
-    private fun startSwitchCounterCleanup() {
-        switchCounterJob?.cancel()
-        switchCounterJob = coroutineScope.launch {
-            while (isRunning.get()) {
-                delay(300_000L) // 5 minit
-                
-                val now = System.currentTimeMillis()
-                val thirtyMinutesAgo = now - 1_800_000L
-                
-                // Remove old switches - THREAD-SAFE
-                synchronized(switchTimes) {
-                    val beforeSize = switchTimes.size
-                    switchTimes.removeAll { it < thirtyMinutesAgo }
-                    
-                    if (beforeSize != switchTimes.size) {
-                        LogUtil.d(TAG, "🧹 Cleaned old switches: ${beforeSize} → ${switchTimes.size}")
-                    }
-                }
-            }
-        }
-    }
-    
-    /**
-     * STOP DNS HEALTH MONITOR
-     */
-    private fun stopDnsHealthMonitor() {
-        dnsHealthMonitorJob?.cancel()
-        dnsHealthMonitorJob = null
-        
-        switchCounterJob?.cancel()
-        switchCounterJob = null
-        
-        // Reset state
-        synchronized(switchTimes) {
-            switchTimes.clear()
-        }
-        switchCount.set(0)
-        autoSwitchEnabled.set(true)
-        qualityCheckFailCount.set(0)
-    }
-    
-    /**
-     * NOTIFY DNS SWITCH - ENHANCED
-     */
-    private fun notifyDnsSwitch(newDns: String) {
-        sendBroadcast(Intent("DNS_SWITCHED").apply {
-            putExtra("new_dns", newDns)
-            putExtra("time", System.currentTimeMillis())
-            putExtra("reason", "smart_switch")
-            putExtra("peak_hour", isPeakHour())
-        })
-        updateNotification("Smart→$newDns")
-    }
-    
-    // ====================== END ENHANCED FUNCTIONS ======================
-    
-    /**
-     * SOFT RESTART - OPTIMIZED
+     * SOFT RESTART - Untuk DAJ sequence
      */
     private fun performSoftRestart() {
         if (isRestarting.get()) {
@@ -853,14 +447,17 @@ class VpnDnsService : VpnService() {
         
         coroutineScope.launch {
             try {
+                // PHASE 1: Check jika VPN masih running
                 if (!isRunning.get() || vpnInterface == null) {
                     LogUtil.w(TAG, "⚠️ VPN not running, attempting recovery...")
                     
+                    // AUTO-RECOVERY: Start VPN semula
                     delay(1000)
                     startVpnService()
                     return@launch
                 }
                 
+                // PHASE 2: Graceful shutdown DNS proxy
                 dnsProxyThread?.let { thread ->
                     if (thread.isAlive) {
                         thread.interrupt()
@@ -874,12 +471,15 @@ class VpnDnsService : VpnService() {
                     }
                 }
                 
+                // PHASE 3: Close socket
                 dnsProxySocket?.close()
                 dnsProxySocket = null
                 dnsProxyThread = null
                 
+                // PHASE 4: Small delay
                 delay(500)
                 
+                // PHASE 5: Restart DNS proxy
                 val dnsServers = getDnsServers(currentDnsType)
                 startDnsProxy(dnsServers)
                 updateNotification("Soft-restarted")
@@ -888,6 +488,7 @@ class VpnDnsService : VpnService() {
             } catch (e: Exception) {
                 LogUtil.e(TAG, "💥 Soft restart failed: ${e.message}")
                 
+                // Emergency recovery
                 if (isRunning.get()) {
                     delay(2000)
                     try {
@@ -901,6 +502,7 @@ class VpnDnsService : VpnService() {
             } finally {
                 isRestarting.set(false)
                 
+                // Reset restart counter after 1 minute
                 handler.postDelayed({
                     restartCount.set(0)
                     LogUtil.d(TAG, "🔄 Restart counter reset")
@@ -910,19 +512,15 @@ class VpnDnsService : VpnService() {
     }
     
     /**
-     * UPDATE NOTIFICATION - ENHANCED INFO
+     * UPDATE NOTIFICATION
      */
     private fun updateNotification(status: String) {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) 
             as NotificationManager
         
-        val peakInfo = if (isPeakHour()) "⏰PEAK" else "📊NORMAL"
-        val switchInfo = "Switches: ${switchCount.get()}"
-        val failInfo = if (qualityCheckFailCount.get() > 0) " | Fails: ${qualityCheckFailCount.get()}" else ""
-        
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("🛡️ CedokDNS ($status)")
-            .setContentText("DNS: $currentDns | $switchInfo$failInfo | $peakInfo")
+            .setContentText("DNS: $currentDns | Restarts: ${restartCount.get()}")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -1007,19 +605,18 @@ class VpnDnsService : VpnService() {
             return
         }
         
+        // 👈 FIXED: Guna startIntent yang disimpan
         val dnsType = startIntent?.getStringExtra(EXTRA_DNS_TYPE) ?: "A"
         
         val success = setupDnsOnlyVpn(dnsType)
         if (success) {
             isRunning.set(true)
             showNotification()
-            startDnsHealthMonitor()   // 🟢 MULA MONITOR BARU
             
             sendBroadcast(Intent("DNS_VPN_STATUS").apply {
                 putExtra("status", "ACTIVE")
                 putExtra("dns_type", dnsType)
                 putExtra("current_dns", currentDns)
-                putExtra("peak_hour", isPeakHour())
             })
             
             LogUtil.d(TAG, "✅ VPN started dengan DNS type: $dnsType")
@@ -1029,54 +626,34 @@ class VpnDnsService : VpnService() {
         }
     }
     
+    /**
+     * STOP VPN SERVICE
+     */
     private fun stopVpnService() {
-        stopDnsHealthMonitor()
         if (!isRunning.get()) {
             LogUtil.d(TAG, "VPN already stopped")
-            stopSelf()
             return
         }
         
         LogUtil.d(TAG, "Stopping VPN service...")
         
         isRunning.set(false)
-        isRestarting.set(false)
+        isRestarting.set(false) // Reset restart flag
         
-        // ⬅️ OPTIMIZE THREAD SHUTDOWN
+        // Graceful shutdown
         dnsProxyThread?.let { thread ->
             if (thread.isAlive) {
                 thread.interrupt()
                 try {
-                    thread.join(1000) // Kurangkan dari 2s ke 1s
-                } catch (e: InterruptedException) {
-                    // Ignore
+                    thread.join(1000)
+                } catch (e: Exception) {
+                    LogUtil.w(TAG, "Thread join interrupted")
                 }
             }
         }
         
-        try {
-            dnsProxySocket?.soTimeout = 100
-            dnsProxySocket?.close()
-        } catch (e: Exception) {
-            LogUtil.w(TAG, "Socket close error: ${e.message}")
-        } finally {
-            dnsProxySocket = null
-        }
-        
-        // ⬅️ OPTIMIZE EXECUTOR SHUTDOWN
-        executor.shutdown()
-        try {
-            if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-                val unfinished = executor.shutdownNow()
-                if (unfinished.isNotEmpty()) {
-                    LogUtil.w(TAG, "Unfinished tasks: ${unfinished.size}")
-                }
-            }
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            executor.shutdownNow()
-        }
-        
+        dnsProxySocket?.close()
+        executor.shutdownNow()
         vpnInterface?.close()
         vpnInterface = null
         
@@ -1087,15 +664,15 @@ class VpnDnsService : VpnService() {
             putExtra("dns_type", currentDnsType)
         })
         
-        LogUtil.d(TAG, "✅ VPN stopped COMPLETELY")
-        
-        stopSelf()
+        LogUtil.d(TAG, "✅ VPN stopped successfully")
+        //stopSelf()
     }
     
     /**
      * SERVICE LIFECYCLE
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 👈 SIMPAN INTENT untuk digunakan kemudian
         startIntent = intent
         
         when (intent?.action) {
