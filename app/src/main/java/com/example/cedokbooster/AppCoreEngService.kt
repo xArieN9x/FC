@@ -307,23 +307,27 @@ class AppCoreEngService : Service() {
         }
     }
 
+    // NEW UPDATE for VpnDnsService.kt
     private fun applyDNS() {
         Log.d(TAG, "Applying DNS: $dnsType")
         
         try {
-            // 🟢 DNS type "auto" akan dihandle oleh VpnDnsService
+            // Guna VpnDnsService untuk apply DNS sebenar
             VpnDnsService.startVpn(this, dnsType)
             Log.d(TAG, "DNS VPN service started dengan type: $dnsType")
-            
-            // TAMBAH LOGGING:
-            if (dnsType == "auto") {
-                Log.d(TAG, "Auto DNS selection activated")
-            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start DNS VPN: ${e.message}")
+            // Fallback ke dummy log (existing behavior)
+            val dns = when (dnsType) {
+                //"A" -> "156.154.70.1"
+                "A" -> "1.1.1.1"
+                else -> "8.8.8.8"
+            }
+            Log.d(TAG, "Fallback: DNS would be: $dns")
         }
     }
 
+    // NEW UPDATE for VpnDnsService.kt
     private fun restoreDNS() {
         Log.d(TAG, "Restoring default DNS")
         
