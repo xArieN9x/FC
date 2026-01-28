@@ -2,154 +2,17 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
-    android:gravity="center_horizontal"
-    android:background="#f5f5f5">
+    android:gravity="center"
+    android:background="#FF5722"
+    android:orientation="vertical">
 
-    <!-- Title -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="CedokBooster (PINK)"
-        android:textSize="28sp"
-        android:textStyle="bold"
-        android:fontFamily="@font/goku"
-        android:textColor="#2c3e50"
-        android:layout_marginTop="20dp"
-        android:layout_marginBottom="20dp" />
-
-    <!-- Public IP -->
-    <TextView
-        android:id="@+id/tvPublicIp"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Public IP: Loading..."
-        android:textSize="14sp"
-        android:textColor="#34495e"
-        android:layout_marginBottom="10dp" />
-
-    <!-- CoreEngine Status -->
-    <TextView
-        android:id="@+id/tvCoreEngineStatus"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="CoreEngine: Disabled"
-        android:textSize="14sp"
-        android:textColor="#34495e"
-        android:layout_marginBottom="20dp" />
- 
-    <!-- Status Indicator -->
-    <View
-        android:id="@+id/viewIndicator"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:background="@drawable/red_circle"
-        android:layout_marginBottom="30dp" />
-
-    <!-- DO ALL JOB Button -->
     <Button
-        android:id="@+id/btnDoAllJob"
-        android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:text="DO ALL JOB"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        android:textColor="#ffffff"
-        android:background="@drawable/button_green"
-        android:layout_marginBottom="20dp" />
-
-    <!-- Divider -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#bdc3c7"
-        android:layout_marginTop="10dp"
-        android:layout_marginBottom="20dp" />
-
-    <!-- Quick Controls Label -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Quick Controls"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:textColor="#2c3e50"
-        android:layout_marginBottom="15dp" />
-
-    <!-- Row 1: ON A and ON ACS -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="10dp">
-
-        <Button
-            android:id="@+id/btnOnA"
-            android:layout_width="0dp"
-            android:layout_height="50dp"
-            android:layout_weight="1"
-            android:text="START"
-            android:textSize="16sp"
-            android:textColor="#ffffff"
-            android:background="@drawable/button_blue"
-            android:layout_marginEnd="8dp" />
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <Button
-                android:id="@+id/btnOnAcs"
-                android:layout_width="match_parent"
-                android:layout_height="50dp"
-                android:text="ON ACS"
-                android:textSize="16sp"
-                android:textColor="#ffffff"
-                android:background="@drawable/button_purple" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Accessibility"
-                android:textSize="10sp"
-                android:textColor="#7f8c8d"
-                android:layout_gravity="center"
-                android:layout_marginTop="2dp" />
-
-        </LinearLayout>
-
-    </LinearLayout>
-
-    <!-- Row 2: ON B and OFF -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/btnOnB"
-            android:layout_width="0dp"
-            android:layout_height="50dp"
-            android:layout_weight="1"
-            android:text="STOP"
-            android:textSize="16sp"
-            android:textColor="#ffffff"
-            android:background="@drawable/button_blue"
-            android:layout_marginEnd="8dp" />
-
-        <Button
-            android:id="@+id/btnOff"
-            android:layout_width="0dp"
-            android:layout_height="50dp"
-            android:layout_weight="1"
-            android:text="EXIT APP"
-            android:textSize="16sp"
-            android:textColor="#ffffff"
-            android:background="@drawable/button_red" />
-
-    </LinearLayout>
+        android:id="@+id/btnForceClose"
+        android:layout_width="250dp"
+        android:layout_height="250dp"
+        android:text="FC"
+        android:textSize="48sp"
+        android:textColor="#FFFFFF"
+        android:background="@drawable/btn_circle"/>
 
 </LinearLayout>
