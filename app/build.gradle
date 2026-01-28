@@ -1,9 +1,6 @@
-plugins {
-    id 'com.android.application' version '8.1.0' apply false
-}
+apply plugin: 'com.android.application'
 
 android {
-    namespace 'com.pakya.forcecloser'
     compileSdk 33
 
     defaultConfig {
